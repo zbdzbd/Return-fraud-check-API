@@ -3,12 +3,28 @@ from pydantic import BaseModel
 from geopy.distance import geodesic
 import requests
 import os
+import re
+import sqlite3
 
 app = FastAPI()
 
 # Replace with your actual API keys
 EASYPOST_API_KEY = os.getenv("EASYPOST_API_KEY")  # or hardcode for now
 GEOCODING_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+
+# SQLite mockup for demo (replace with your actual DB system in production)
+DB_PATH = "orders.db"
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id TEXT,
+    street TEXT,
+    zip TEXT
+)
+""")
+conn.commit()
 
 class Address(BaseModel):
     city: str
@@ -20,6 +36,11 @@ class ReturnRequest(BaseModel):
     tracking_number: str
     carrier: str
     correct_item_weight_lbs: float  # expected item weight in pounds
+
+class OrderSubmission(BaseModel):
+    order_id: str
+    street: str  # Full street input from customer (e.g. "312k Arbor Downs")
+    zip: str
 
 @app.post("/check-return")
 def check_return(data: ReturnRequest):
@@ -90,3 +111,33 @@ def check_return(data: ReturnRequest):
         "weight_flagged": weight_fraud,
         "instruction": "To test this API, use POST /check-return with a JSON body that includes: order_id, shipping_address (with city and zip), tracking_number, carrier, and correct_item_weight_lbs."
     }
+
+@app.post("/check-order-fraud")
+def check_order_fraud(order: OrderSubmission):
+    # Normalize street for fraud detection so more like %housenumber% %streetname% to make sure it not been jigged
+    match = re.match(r"(\d+)[a-zA-Z]*\s+(.*)", order.street)
+    if not match:
+        raise HTTPException(status_code=400, detail="Invalid street format")
+
+    number = match.group(1)
+    street = match.group(2).lower()
+
+    pattern = f"%{number}%{street}%"
+    cursor.execute("""
+        SELECT COUNT(*) FROM orders
+        WHERE zip = ? AND street LIKE ?
+    """, (order.zip, pattern))
+    count = cursor.fetchone()[0]
+
+    # Insert new record
+    cursor.execute("""
+        INSERT INTO orders (order_id, street, zip) VALUES (?, ?, ?)
+    """, (order.order_id, order.street.lower(), order.zip))
+    conn.commit()
+
+    return {
+        "is_fraud": count >= 3,
+        "matched_entries": count,
+        "normalized_street": f"{number} {street}"
+    }
+
