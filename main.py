@@ -19,10 +19,11 @@ class ReturnRequest(BaseModel):
     shipping_address: Address
     tracking_number: str
     carrier: str
+    correct_item_weight_lbs: float  # expected item weight in pounds
 
 @app.post("/check-return")
 def check_return(data: ReturnRequest):
-    # 1. Get return drop-off address from EasyPost
+    # 1. Get return drop-off address and weight from EasyPost
     easypost_url = f"https://api.easypost.com/v2/trackers/{data.carrier}/{data.tracking_number}"
     headers = {"Authorization": f"Bearer {EASYPOST_API_KEY}"}
     response = requests.get(easypost_url, headers=headers)
@@ -56,11 +57,35 @@ def check_return(data: ReturnRequest):
 
     # 3. Compute distance
     distance = geodesic(ship_coords, drop_coords).miles
-    is_fraud = distance > 15
+    distance_fraud = distance > 15
+
+    # 4. Weight validation logic
+    return_weight_oz = tracker.get("weight")  # in ounces
+    if return_weight_oz is None:
+        raise HTTPException(status_code=400, detail="Return package weight not found")
+
+    return_weight_lbs = return_weight_oz / 16.0
+    weight_fraud = False
+
+    if data.correct_item_weight_lbs > 1 and data.correct_item_weight_lbs <= 3:
+        if return_weight_lbs < 1:
+            weight_fraud = True
+    elif data.correct_item_weight_lbs > 3 and data.correct_item_weight_lbs <= 8:
+        if data.correct_item_weight_lbs - return_weight_lbs > 1:
+            weight_fraud = True
+    elif data.correct_item_weight_lbs > 8:
+        if data.correct_item_weight_lbs - return_weight_lbs > 2:
+            weight_fraud = True
+
+    is_fraud = distance_fraud or weight_fraud
 
     return {
         "is_fraud": is_fraud,
         "distance_miles": round(distance, 2),
         "drop_off_city": drop_off_city,
-        "shipping_city": data.shipping_address.city
+        "shipping_city": data.shipping_address.city,
+        "return_weight_lbs": round(return_weight_lbs, 2),
+        "expected_weight_lbs": data.correct_item_weight_lbs,
+        "distance_flagged": distance_fraud,
+        "weight_flagged": weight_fraud
     }
