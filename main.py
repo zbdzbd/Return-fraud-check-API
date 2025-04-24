@@ -34,10 +34,10 @@ def check_return(data: ReturnRequest):
     if not tracker or not tracker.get("tracking_details"):
         raise HTTPException(status_code=404, detail="Tracking details not found")
 
-    # Extract last known location (assume latest scan is drop-off location)
-    last_detail = tracker["tracking_details"][-1]
-    drop_off_city = last_detail.get("city")
-    drop_off_zip = last_detail.get("zip")
+    # Extract first scan location (initial drop-off location)
+    first_detail = tracker["tracking_details"][0]
+    drop_off_city = first_detail.get("city")
+    drop_off_zip = first_detail.get("zip")
 
     if not drop_off_city or not drop_off_zip:
         raise HTTPException(status_code=400, detail="Incomplete drop-off location info")
@@ -87,5 +87,6 @@ def check_return(data: ReturnRequest):
         "return_weight_lbs": round(return_weight_lbs, 2),
         "expected_weight_lbs": data.correct_item_weight_lbs,
         "distance_flagged": distance_fraud,
-        "weight_flagged": weight_fraud
+        "weight_flagged": weight_fraud,
+        "instruction": "To test this API, use POST /check-return with a JSON body that includes: order_id, shipping_address (with city and zip), tracking_number, carrier, and correct_item_weight_lbs."
     }
